@@ -1,0 +1,66 @@
+# Default values for app-backend.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+image:
+  repository: ghcr.io/finure/app-backend
+  tag: 0.1.0
+  pullPolicy: IfNotPresent
+secretName: "finure-app"
+consumer:
+  command:
+    - python
+    - consume_data.py
+  replicas: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+   
+podAnnotations: {}
+podLabels: {}
+imagePullSecrets: 
+  - name: "ghcr"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+volumes: 
+  - name: kafka-certs
+    secret:
+      secretName: "kafka"
+  - name: kafka-ca
+    secret:
+      secretName: "finure-cluster-ca-cert"
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: 
+  - name: kafka-certs
+    mountPath: /etc/kafka/secrets
+    readOnly: true
+  - name: kafka-ca
+    mountPath: /etc/kafka/ca
+    readOnly: true
+
+livenessProbe:
+  exec:
+    command: ["/bin/sh", "/app/probe.sh"]
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 5
+readinessProbe:
+  exec:
+    command: ["/bin/sh", "/app/probe.sh"]
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
