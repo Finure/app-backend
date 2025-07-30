@@ -12,7 +12,6 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     librdkafka-dev \
     pkg-config \
-    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY app/requirements.txt .
@@ -30,6 +29,7 @@ RUN apt-get update && apt-get install -y \
     unzip \
     librdkafka1 \
     ca-certificates \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 ENV FLYWAY_VERSION=11.10.3
