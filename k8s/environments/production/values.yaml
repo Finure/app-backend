@@ -4,7 +4,7 @@
 
 image:
   repository: ghcr.io/finure/app-backend
-  tag: 1.0.3
+  tag: 1.0.4
   pullPolicy: IfNotPresent
 secretName: "finure-app"
 consumer:
@@ -18,7 +18,6 @@ consumer:
     maxReplicas: 3
     targetCPUUtilizationPercentage: 80
     # targetMemoryUtilizationPercentage: 80
-
 podAnnotations: {}
 podLabels: {}
 imagePullSecrets:
