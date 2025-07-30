@@ -1,22 +1,23 @@
 import os
 import json
-import time
-import signal
-from queue import Queue, Empty
-from threading import Thread
-from dotenv import load_dotenv
-from confluent_kafka import Consumer, KafkaError
 import psycopg2
-from psycopg2.extras import execute_values
+from psycopg2.extras import execute_batch
+from confluent_kafka import Consumer
+import logging
+from collections import defaultdict
 
-load_dotenv()
+# logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+)
+logger = logging.getLogger("kafka-batch-consumer")
+
+BATCH_SIZE = 5000
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC")
-
 KAFKA_SECRET_PATH = "/etc/kafka/secrets"
 KAFKA_CA_PATH = "/etc/kafka/ca"
-
 DB_HOST = os.getenv("PGHOST")
 DB_PORT = os.getenv("PGPORT", 5432)
 DB_NAME = os.getenv("PGDATABASE")
@@ -60,173 +61,145 @@ consumer_conf = {
     "group.id": "finure",
     "auto.offset.reset": "earliest",
     "enable.auto.commit": False,
-    "session.timeout.ms": 90000,
-    "max.poll.interval.ms": 1800000,
-    "heartbeat.interval.ms": 30000,
-    "request.timeout.ms": 120000,
 }
 
-consumer = Consumer(consumer_conf)
-consumer.subscribe([KAFKA_TOPIC])
+db_conn = psycopg2.connect(
+    host=DB_HOST,
+    port=DB_PORT,
+    dbname=DB_NAME,
+    user=DB_USER,
+    password=DB_PASSWORD,
+)
+db_conn.autocommit = False
 
-record_queue = Queue()
-commit_queue = Queue()
-running = True
-processed = 0
-committed = 0
-BATCH_SIZE = 2000
-COMMIT_INTERVAL = 5
+insert_sql = """
+INSERT INTO application_record (
+    id, code_gender, flag_own_car, flag_own_realty, cnt_children,
+    amt_income_total, name_income_type, name_education_type, name_family_status,
+    name_housing_type, days_birth, days_employed, flag_mobil, flag_work_phone,
+    flag_phone, flag_email, occupation_type, cnt_fam_members
+)
+VALUES (
+    %(id)s, %(code_gender)s, %(flag_own_car)s, %(flag_own_realty)s, %(cnt_children)s,
+    %(amt_income_total)s, %(name_income_type)s, %(name_education_type)s, %(name_family_status)s,
+    %(name_housing_type)s, %(days_birth)s, %(days_employed)s, %(flag_mobil)s, %(flag_work_phone)s,
+    %(flag_phone)s, %(flag_email)s, %(occupation_type)s, %(cnt_fam_members)s
+)
+ON CONFLICT (id) DO NOTHING
+"""
 
 
-def shutdown(sig, frame):
-    global running
-    print("\nShutdown signal received")
-    running = False
-
-
-signal.signal(signal.SIGINT, shutdown)
-signal.signal(signal.SIGTERM, shutdown)
-
-
-def db_worker():
-    global committed
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-    )
-    conn.autocommit = False
-    cur = conn.cursor()
-    batch = []
-    last_commit_time = time.time()
-
-    while running or not record_queue.empty():
+def process_batch(messages):
+    partition_offsets = defaultdict(list)
+    records = []
+    for m in messages:
         try:
-            record = record_queue.get(timeout=1)
-            batch.append(record)
-        except Empty:
-            pass
+            data = json.loads(m.value())
+            record = {
+                "id": data["id"],
+                "code_gender": data.get("code_gender"),
+                "flag_own_car": data.get("flag_own_car"),
+                "flag_own_realty": data.get("flag_own_realty"),
+                "cnt_children": data.get("cnt_children"),
+                "amt_income_total": data.get("amt_income_total"),
+                "name_income_type": data.get("name_income_type"),
+                "name_education_type": data.get("name_education_type"),
+                "name_family_status": data.get("name_family_status"),
+                "name_housing_type": data.get("name_housing_type"),
+                "days_birth": data.get("days_birth"),
+                "days_employed": data.get("days_employed"),
+                "flag_mobil": data.get("flag_mobil"),
+                "flag_work_phone": data.get("flag_work_phone"),
+                "flag_phone": data.get("flag_phone"),
+                "flag_email": data.get("flag_email"),
+                "occupation_type": data.get("occupation_type"),
+                "cnt_fam_members": data.get("cnt_fam_members"),
+                "approved": data.get("approved"),
+                "approval_date": data.get("approval_date"),
+                "risk_score": data.get("risk_score"),
+                "risky": data.get("risky"),
+                "external_data_last_checked": data.get(
+                    "external_data_last_checked"
+                ),
+            }
+            records.append(record)
+            partition_offsets[m.partition()].append(m.offset())
+        except Exception as e:
+            logger.warning(f"Skipping bad message: {e}")
 
-        if len(batch) >= BATCH_SIZE or (
-            time.time() - last_commit_time > COMMIT_INTERVAL and batch
-        ):
-            try:
-                execute_values(
-                    cur,
-                    """
-                    INSERT INTO application_record (
-                        id, code_gender, flag_own_car, flag_own_realty, cnt_children,
-                        amt_income_total, name_income_type, name_education_type,
-                        name_family_status, name_housing_type, days_birth,
-                        days_employed, flag_mobil, flag_work_phone, flag_phone,
-                        flag_email, occupation_type, cnt_fam_members
-                    ) VALUES %s
-                    ON CONFLICT (id) DO NOTHING;
-                    """,
-                    [
-                        (
-                            r["id"],
-                            r["code_gender"],
-                            r["flag_own_car"],
-                            r["flag_own_realty"],
-                            r["cnt_children"],
-                            r["amt_income_total"],
-                            r["name_income_type"],
-                            r["name_education_type"],
-                            r["name_family_status"],
-                            r["name_housing_type"],
-                            r["days_birth"],
-                            r["days_employed"],
-                            r["flag_mobil"],
-                            r["flag_work_phone"],
-                            r["flag_phone"],
-                            r["flag_email"],
-                            r.get("occupation_type"),
-                            r["cnt_fam_members"],
-                        )
-                        for r in batch
-                    ],
-                )
-                conn.commit()
-                committed += len(batch)
-                print(f"Committed {committed} records to DB")
-                batch.clear()
-                last_commit_time = time.time()
-            except Exception as e:
-                print(f"Batch insert failed: {e}")
-                conn.rollback()
+    if not records:
+        logger.info("No valid records to insert in this batch")
+        return
 
-    cur.close()
-    conn.close()
-
-
-def commit_worker():
-    last_commit_time = time.time()
-    pending_messages = []
-
-    while running or not commit_queue.empty():
+    with db_conn.cursor() as cur:
         try:
-            msg = commit_queue.get(timeout=2)
-            pending_messages.append(msg)
-        except Empty:
-            pass
+            execute_batch(cur, insert_sql, records, page_size=BATCH_SIZE)
+            db_conn.commit()
+            logger.info(f"Inserted {len(records)} records into Postgres")
+        except Exception as e:
+            db_conn.rollback()
+            logger.error(f"DB insert error: {e}")
+            raise
 
-        should_commit = len(pending_messages) >= 30000 or (
-            time.time() - last_commit_time > 60 and pending_messages
+    for partition, offsets in partition_offsets.items():
+        if offsets:
+            logger.info(
+                f"Partition {partition}: offsets {min(offsets)} to {max(offsets)} (count={len(offsets)})"
+            )
+
+
+def main():
+    c = Consumer(consumer_conf)
+
+    def on_assign(consumer, partitions):
+        logger.info(
+            "Partitions assigned to this consumer: %s",
+            [f"{p.topic}-{p.partition}" for p in partitions],
         )
 
-        if should_commit:
-            try:
-                consumer.commit(pending_messages[-1], asynchronous=False)
-                print(f"Kafka: Committed {len(pending_messages)} offsets")
-                pending_messages.clear()
-                last_commit_time = time.time()
-            except Exception as e:
-                print(f"Kafka commit failed: {e}")
-                if len(pending_messages) > 50000:
-                    pending_messages = pending_messages[-25000:]
+    c.subscribe([KAFKA_TOPIC], on_assign=on_assign)
 
-
-db_thread = Thread(target=db_worker)
-db_thread.start()
-
-commit_thread = Thread(target=commit_worker)
-commit_thread.start()
-
-
-def handle_message(msg):
-    global processed
+    batch = []
+    total_processed = 0
     try:
-        record = json.loads(msg.value().decode("utf-8"))
-        record_queue.put(record)
-        commit_queue.put(msg)
-        processed += 1
-        if processed % 5000 == 0:
-            print(f"Processed {processed} messages from Kafka")
-    except Exception as e:
-        print(f"Failed to process message: {e}")
-        print(f"Payload: {msg.value()}")
+        while True:
+            msgs = c.consume(num_messages=BATCH_SIZE, timeout=5.0)
+            if msgs:
+                good_msgs = [m for m in msgs if m and not m.error()]
+                batch.extend(good_msgs)
+            while len(batch) >= BATCH_SIZE:
+                to_process = batch[:BATCH_SIZE]
+                process_batch(to_process)
+                total_processed += len(to_process)
+                c.commit()
+                logger.info(
+                    f"Committed offsets after batch of {len(to_process)} messages"
+                )
+                batch = batch[BATCH_SIZE:]
+            if not msgs and batch:
+                process_batch(batch)
+                total_processed += len(batch)
+                c.commit()
+                logger.info(
+                    f"Committed offsets after batch of {len(batch)} messages"
+                )
+                batch = []
+            if not msgs:
+                logger.info("No new messages polled")
+    except KeyboardInterrupt:
+        logger.info("Shutting down gracefully")
+    finally:
+        if batch:
+            process_batch(batch)
+            total_processed += len(batch)
+            c.commit()
+            logger.info(
+                f"Committed offsets after final batch of {len(batch)} messages"
+            )
+        logger.info(f"Total messages processed: {total_processed}")
+        c.close()
+        db_conn.close()
 
 
-print("Consuming messages from Kafka")
-try:
-    while running:
-        msg = consumer.poll(1.0)
-        if msg is None:
-            continue
-        if msg.error():
-            if msg.error().code() == KafkaError._PARTITION_EOF:
-                continue
-            else:
-                print(f"Kafka error: {msg.error()}")
-                continue
-        handle_message(msg)
-
-finally:
-    print("\nShutting down")
-    consumer.close()
-    db_thread.join()
-    commit_thread.join()
-    print(f"Final total processed: {processed}, committed to DB: {committed}")
+if __name__ == "__main__":
+    main()
