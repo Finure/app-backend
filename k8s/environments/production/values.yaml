@@ -4,7 +4,7 @@
 
 image:
   repository: ghcr.io/finure/app-backend
-  tag: 1.0.1
+  tag: 0.1.0
   pullPolicy: IfNotPresent
 secretName: "finure-app"
 consumer:
@@ -18,35 +18,36 @@ consumer:
     maxReplicas: 3
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
+   
 podAnnotations: {}
 podLabels: {}
-imagePullSecrets:
+imagePullSecrets: 
   - name: "ghcr"
+
 serviceAccount:
-  # Specifies whether a service account should be created
   create: true
-  # Automatically mount a ServiceAccount's API credentials?
   automount: true
-  # Annotations to add to the service account
-  annotations: {}
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
-  name: ""
-volumes:
+  annotations: 
+    iam.gke.io/gcp-service-account: app-backend@finure-465001.iam.gserviceaccount.com
+  name: "app-backend"
+
+volumes: 
   - name: kafka-certs
     secret:
       secretName: "kafka"
   - name: kafka-ca
     secret:
       secretName: "finure-cluster-ca-cert"
+
 # Additional volumeMounts on the output Deployment definition.
-volumeMounts:
+volumeMounts: 
   - name: kafka-certs
     mountPath: /etc/kafka/secrets
     readOnly: true
   - name: kafka-ca
     mountPath: /etc/kafka/ca
     readOnly: true
+
 livenessProbe:
   exec:
     command: ["/bin/sh", "/app/probe.sh"]
