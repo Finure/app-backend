@@ -4,7 +4,7 @@
 
 image:
   repository: ghcr.io/finure/app-backend
-  tag: 0.1.0
+  tag: 1.0.2
   pullPolicy: IfNotPresent
 secretName: "finure-app"
 consumer:
@@ -18,36 +18,31 @@ consumer:
     maxReplicas: 3
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
-   
 podAnnotations: {}
 podLabels: {}
-imagePullSecrets: 
+imagePullSecrets:
   - name: "ghcr"
-
 serviceAccount:
   create: true
   automount: true
-  annotations: 
+  annotations:
     iam.gke.io/gcp-service-account: app-backend@finure-465001.iam.gserviceaccount.com
   name: "app-backend"
-
-volumes: 
+volumes:
   - name: kafka-certs
     secret:
       secretName: "kafka"
   - name: kafka-ca
     secret:
       secretName: "finure-cluster-ca-cert"
-
 # Additional volumeMounts on the output Deployment definition.
-volumeMounts: 
+volumeMounts:
   - name: kafka-certs
     mountPath: /etc/kafka/secrets
     readOnly: true
   - name: kafka-ca
     mountPath: /etc/kafka/ca
     readOnly: true
-
 livenessProbe:
   exec:
     command: ["/bin/sh", "/app/probe.sh"]
