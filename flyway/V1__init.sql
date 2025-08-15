@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS application_record (
-    id BIGINT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     age INT NOT NULL,
     income INT NOT NULL,
     employed BOOLEAN NOT NULL,

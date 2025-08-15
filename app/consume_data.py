@@ -109,7 +109,7 @@ def process_batch(messages):
         try:
             data = json.loads(m.value())
             record = {
-                "id": int(data["id"]),
+                "id": data["id"],
                 "age": int(data["age"]),
                 "income": int(data["income"]),
                 "employed": _to_bool(data["employed"]),
