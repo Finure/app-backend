@@ -115,7 +115,7 @@ def process_batch(messages):
                 "employed": _to_bool(data["employed"]),
                 "credit_score": int(data["credit_score"]),
                 "loan_amount": int(data["loan_amount"]),
-                "approved": _to_bool(data["approved"]),
+                "approved": _to_bool(data.get("approved", False)),
             }
             records.append(record)
             partition_offsets[m.partition()].append(m.offset())
