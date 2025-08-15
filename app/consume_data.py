@@ -109,13 +109,13 @@ def process_batch(messages):
         try:
             data = json.loads(m.value())
             record = {
-                "id": int(_get(data, "id", "ID")),
-                "age": int(_get(data, "age", "Age")),
-                "income": int(_get(data, "income", "Income")),
-                "employed": _to_bool(_get(data, "employed", "Employed")),
-                "credit_score": int(_get(data, "credit_score", "CreditScore")),
-                "loan_amount": int(_get(data, "loan_amount", "LoanAmount")),
-                "approved": _to_bool(_get(data, "approved", "Approved")),
+                "id": int(data["id"]),
+                "age": int(data["age"]),
+                "income": int(data["income"]),
+                "employed": _to_bool(data["employed"]),
+                "credit_score": int(data["credit_score"]),
+                "loan_amount": int(data["loan_amount"]),
+                "approved": _to_bool(data["approved"]),
             }
             records.append(record)
             partition_offsets[m.partition()].append(m.offset())
