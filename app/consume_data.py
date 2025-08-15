@@ -74,19 +74,32 @@ db_conn.autocommit = False
 
 insert_sql = """
 INSERT INTO application_record (
-    id, code_gender, flag_own_car, flag_own_realty, cnt_children,
-    amt_income_total, name_income_type, name_education_type, name_family_status,
-    name_housing_type, days_birth, days_employed, flag_mobil, flag_work_phone,
-    flag_phone, flag_email, occupation_type, cnt_fam_members
+    id, age, income, employed, credit_score, loan_amount, approved
 )
 VALUES (
-    %(id)s, %(code_gender)s, %(flag_own_car)s, %(flag_own_realty)s, %(cnt_children)s,
-    %(amt_income_total)s, %(name_income_type)s, %(name_education_type)s, %(name_family_status)s,
-    %(name_housing_type)s, %(days_birth)s, %(days_employed)s, %(flag_mobil)s, %(flag_work_phone)s,
-    %(flag_phone)s, %(flag_email)s, %(occupation_type)s, %(cnt_fam_members)s
+    %(id)s, %(age)s, %(income)s, %(employed)s, %(credit_score)s, %(loan_amount)s, %(approved)s
 )
 ON CONFLICT (id) DO NOTHING
 """
+
+
+def _to_bool(v):
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "t", "yes", "y")
+    return False
+
+
+def _get(d, *keys):
+    for k in keys:
+        if k in d and d[k] is not None:
+            return d[k]
+    return None
 
 
 def process_batch(messages):
@@ -96,31 +109,13 @@ def process_batch(messages):
         try:
             data = json.loads(m.value())
             record = {
-                "id": data["id"],
-                "code_gender": data.get("code_gender"),
-                "flag_own_car": data.get("flag_own_car"),
-                "flag_own_realty": data.get("flag_own_realty"),
-                "cnt_children": data.get("cnt_children"),
-                "amt_income_total": data.get("amt_income_total"),
-                "name_income_type": data.get("name_income_type"),
-                "name_education_type": data.get("name_education_type"),
-                "name_family_status": data.get("name_family_status"),
-                "name_housing_type": data.get("name_housing_type"),
-                "days_birth": data.get("days_birth"),
-                "days_employed": data.get("days_employed"),
-                "flag_mobil": data.get("flag_mobil"),
-                "flag_work_phone": data.get("flag_work_phone"),
-                "flag_phone": data.get("flag_phone"),
-                "flag_email": data.get("flag_email"),
-                "occupation_type": data.get("occupation_type"),
-                "cnt_fam_members": data.get("cnt_fam_members"),
-                "approved": data.get("approved"),
-                "approval_date": data.get("approval_date"),
-                "risk_score": data.get("risk_score"),
-                "risky": data.get("risky"),
-                "external_data_last_checked": data.get(
-                    "external_data_last_checked"
-                ),
+                "id": int(_get(data, "id", "ID")),
+                "age": int(_get(data, "age", "Age")),
+                "income": int(_get(data, "income", "Income")),
+                "employed": _to_bool(_get(data, "employed", "Employed")),
+                "credit_score": int(_get(data, "credit_score", "CreditScore")),
+                "loan_amount": int(_get(data, "loan_amount", "LoanAmount")),
+                "approved": _to_bool(_get(data, "approved", "Approved")),
             }
             records.append(record)
             partition_offsets[m.partition()].append(m.offset())
