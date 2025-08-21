@@ -5,6 +5,9 @@ from psycopg2.extras import execute_batch
 from confluent_kafka import Consumer
 import logging
 from collections import defaultdict
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # logging
 logging.basicConfig(
@@ -14,6 +17,10 @@ logger = logging.getLogger("kafka-batch-consumer")
 
 BATCH_SIZE = 5000
 
+MODEL_ENDPOINT = os.getenv(
+    "MODEL_ENDPOINT",
+    "http://finure-ai-predictor.kserve.svc.cluster.local/v1/models/finure-ai:predict",
+)
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC")
 KAFKA_SECRET_PATH = "/etc/kafka/secrets"
@@ -23,6 +30,9 @@ DB_PORT = os.getenv("PGPORT", 5432)
 DB_NAME = os.getenv("PGDATABASE")
 DB_USER = os.getenv("PGUSER")
 DB_PASSWORD = os.getenv("PGPASSWORD")
+MODEL_TIMEOUT_SECS = float(os.getenv("MODEL_TIMEOUT_SECS", "60.0"))
+MODEL_MAX_RETRIES = int(os.getenv("MODEL_MAX_RETRIES", "3"))
+MODEL_BACKOFF_FACTOR = float(os.getenv("MODEL_BACKOFF_FACTOR", "0.3"))
 
 if not all(
     [
@@ -102,9 +112,53 @@ def _get(d, *keys):
     return None
 
 
+def _model_session():
+    s = requests.Session()
+    retry = Retry(
+        total=MODEL_MAX_RETRIES,
+        read=MODEL_MAX_RETRIES,
+        connect=MODEL_MAX_RETRIES,
+        backoff_factor=MODEL_BACKOFF_FACTOR,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["POST"]),
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
+    return s
+
+
+_session = _model_session()
+
+
+def _predict_approvals(batch_features):
+    instances = [[{
+        "Age": f["age"],
+        "Income": f["income"],
+        "Employed": f["employed"],
+        "CreditScore": f["credit_score"],
+        "LoanAmount": f["loan_amount"],
+    }] for f in batch_features]
+    payload = {"instances": instances}
+    resp = _session.post(
+        MODEL_ENDPOINT,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        timeout=MODEL_TIMEOUT_SECS,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    preds = data.get("predictions")
+    if not isinstance(preds, list) or len(preds) != len(batch_features):
+        raise ValueError("Model response invalid or count mismatch")
+    return [bool(int(p)) for p in preds]
+
+
 def process_batch(messages):
     partition_offsets = defaultdict(list)
     records = []
+    needing_pred_idx = []
+    features_for_pred = []
     for m in messages:
         try:
             data = json.loads(m.value())
@@ -115,8 +169,17 @@ def process_batch(messages):
                 "employed": _to_bool(data["employed"]),
                 "credit_score": int(data["credit_score"]),
                 "loan_amount": int(data["loan_amount"]),
-                "approved": _to_bool(data.get("approved", False)),
+                "approved": None if _get(data, "approved") is None else _to_bool(data["approved"]),
             }
+            if record["approved"] is None:
+                needing_pred_idx.append(len(records))
+                features_for_pred.append({
+                    "age": record["age"],
+                    "income": record["income"],
+                    "employed": record["employed"],
+                    "credit_score": record["credit_score"],
+                    "loan_amount": record["loan_amount"],
+                })
             records.append(record)
             partition_offsets[m.partition()].append(m.offset())
         except Exception as e:
@@ -126,11 +189,23 @@ def process_batch(messages):
         logger.info("No valid records to insert in this batch")
         return
 
+    if needing_pred_idx:
+        preds = _predict_approvals(features_for_pred)
+        for idx, pred in zip(needing_pred_idx, preds):
+            records[idx]["approved"] = pred
+
+    for r in records:
+        if r["approved"] is None:
+            raise RuntimeError("Approved still None after prediction step")
+
     with db_conn.cursor() as cur:
         try:
             execute_batch(cur, insert_sql, records, page_size=BATCH_SIZE)
             db_conn.commit()
-            logger.info(f"Inserted {len(records)} records into Postgres")
+            logger.info(
+                f"Inserted {len(records)} records into Postgres "
+                f"({len(needing_pred_idx)} with model-predicted 'approved')"
+            )
         except Exception as e:
             db_conn.rollback()
             logger.error(f"DB insert error: {e}")
