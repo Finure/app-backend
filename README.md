@@ -15,6 +15,7 @@ Finure app backend is designed as the backend for the Finure app. It sets up the
 ## 3. Prerequisites
 - Kubernetes cluster bootstrapped ([Finure Terraform](https://github.com/finure/terraform))
 - Infrastructure setup via Flux ([Finure Kubernetes](https://github.com/finure/kubernetes))
+
 If running locally for development/testing:
 - Docker
 - Python 3.12+ 
