@@ -1,0 +1,23 @@
+{{- if .Values.consumer.autoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "app-backend.fullname" . }}
+  labels:
+    {{- include "app-backend.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ .Values.kafka.consumer.target }}
+  minReplicaCount: 1
+  maxReplicaCount: 3
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: {{ .Values.kafka.consumer.bootstrapServers }}
+        consumerGroup: {{ .Values.kafka.consumer.consumerGroup }}
+        topic: {{ .Values.kafka.consumer.topic }}
+        lagThreshold: {{ .Values.kafka.consumer.lagThreshold }}
+        tls: {{ .Values.kafka.consumer.tls }}
+      authenticationRef:
+        name: {{ .Values.kafka.consumer.auth.name }}
+        kind: {{ .Values.kafka.consumer.auth.kind }}

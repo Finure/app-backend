@@ -55,3 +55,14 @@ readinessProbe:
   initialDelaySeconds: 10
   periodSeconds: 10
   timeoutSeconds: 5
+kafka:
+  consumer:
+    target: "app-backend"
+    bootstrapServers: "finure-kafka-bootstrap.kafka:9093"
+    consumerGroup: "finure"
+    topic: "finure"
+    lagThreshold: "1000"
+    tls: "enable"
+    auth:
+      name: "kafka"
+      kind: "ClusterTriggerAuthentication"
