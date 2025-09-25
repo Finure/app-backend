@@ -43,7 +43,7 @@ app-backend/
 │   │       └── templates/
 │   │           ├── _helpers.tpl        # Helm template helpers
 │   │           ├── deployment.yaml     # Kubernetes Deployment manifest
-│   │           ├── hpa.yaml            # Horizontal Pod Autoscaler
+│   │           ├── keda.yaml           # KEDA ScaledObject for Kafka consumer
 │   │           └── serviceaccount.yaml # Service account for backend
 │   └── scripts/
 │       ├── istio.sh                    # Istio setup script
