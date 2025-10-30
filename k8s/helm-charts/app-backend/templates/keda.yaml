@@ -21,3 +21,4 @@ spec:
       authenticationRef:
         name: {{ .Values.kafka.consumer.auth.name }}
         kind: {{ .Values.kafka.consumer.auth.kind }}
+{{- end }}
